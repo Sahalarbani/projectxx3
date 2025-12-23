@@ -1,0 +1,7 @@
+{
+  "name": "LuminaPOS 2025",
+  "description": "A futuristic, mobile-first Point of Sale system featuring glassmorphism design, key-based authentication, and offline capabilities.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
