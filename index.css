@@ -1,0 +1,38 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Define CSS variables with direct hex values */
+    --background: #1a1b26;
+    --surface: #232533;
+    --text: #e0e0e0;
+    --primary-700: #4338ca; /* Standard indigo-700 */
+  }
+
+  body {
+    /* Use CSS variables directly for colors to avoid build issues */
+    background-color: var(--background);
+    color: var(--text);
+    @apply font-sans antialiased; /* Other utilities are fine */
+  }
+
+  /* Custom Scrollbar using CSS variables */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--background);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--surface);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--primary-700);
+  }
+}

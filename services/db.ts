@@ -66,14 +66,23 @@ class DBService {
     this.isOffline = true;
   }
 
-  // --- Admin Credentials ---
+  // --- SECURITY HELPER: HASHING ---
+  private async hashPassword(password: string): Promise<string> {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(password);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  // --- Admin Credentials (Secured with Hashing) ---
   async getAdminCredentials() {
     try {
       if (this.isOffline) throw new Error("Offline");
       const docRef = doc(firestore, 'settings', 'admin_creds');
       const snap = await getDoc(docRef);
-      if (snap.exists()) return snap.data() as { username: string, password: string };
-      return null; // Return null if no admin credentials exist
+      if (snap.exists()) return snap.data() as { username: string, passwordHash: string };
+      return null;
     } catch (e) {
       this.handleError(e);
       return this.getLocal('admin_creds', null);
@@ -81,18 +90,21 @@ class DBService {
   }
 
   async updateAdminCredentials(username: string, password: string) {
+    const passwordHash = await this.hashPassword(password);
     try {
       if (this.isOffline) throw new Error("Offline");
-      await setDoc(doc(firestore, 'settings', 'admin_creds'), { username, password });
+      await setDoc(doc(firestore, 'settings', 'admin_creds'), { username, passwordHash });
     } catch (e) {
       this.handleError(e);
-      this.setLocal('admin_creds', { username, password });
+      this.setLocal('admin_creds', { username, passwordHash });
     }
   }
 
   async validateAdmin(u: string, p: string): Promise<boolean> {
     const creds = await this.getAdminCredentials();
-    return creds ? creds.username === u && creds.password === p : false;
+    if (!creds) return false;
+    const incomingPasswordHash = await this.hashPassword(p);
+    return creds.username === u && creds.passwordHash === incomingPasswordHash;
   }
 
   // --- Products ---
@@ -101,7 +113,6 @@ class DBService {
       if (this.isOffline) throw new Error("Offline");
       const snapshot = await getDocs(collection(firestore, 'products'));
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-      // Sync to local for future offline use
       if (data.length > 0) this.setLocal('products', data);
       return data.length > 0 ? data : INITIAL_PRODUCTS;
     } catch (e) {
@@ -184,7 +195,6 @@ class DBService {
       if (!keyData.is_active) return { valid: false, message: 'Key has been revoked' };
       if (new Date(keyData.valid_until) < new Date()) return { valid: false, message: 'Key expired' };
 
-      // Device Binding
       if (keyData.deviceId && keyData.deviceId !== deviceId) {
         return { valid: false, message: 'Key is registered to another device.' };
       }
@@ -236,7 +246,6 @@ class DBService {
     try {
       if (this.isOffline) throw new Error("Offline");
       await setDoc(doc(firestore, 'transactions', tx.id), tx);
-      // Decrement Stock
       for (const item of tx.items) {
         const pRef = doc(firestore, 'products', item.id);
         const pSnap = await getDoc(pRef);
@@ -250,7 +259,6 @@ class DBService {
       const txs = this.getLocal<Transaction[]>('transactions', []);
       this.setLocal('transactions', [tx, ...txs]);
       
-      // Offline Stock Update
       const products = this.getLocal<Product[]>('products', INITIAL_PRODUCTS);
       tx.items.forEach(item => {
         const idx = products.findIndex(p => p.id === item.id);

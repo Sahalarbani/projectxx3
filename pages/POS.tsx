@@ -1,268 +1,203 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, Minus, Trash2, CreditCard, Banknote, QrCode, ShoppingCart, Filter, Printer } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Button, Input, Card, Badge } from '../components/ui/Primitives';
-import { Product, CartItem, Transaction } from '../types';
+import { Grid, List, Search, ShoppingCart, Plus, Minus, X, Loader2 } from 'lucide-react';
+import { Input, Button, Card, Badge } from '../components/ui/Primitives';
 import { db } from '../services/db';
+import { Product, Transaction } from '../types';
 import { printReceipt } from '../services/printer';
-import { cn } from '../components/ui/Primitives';
+import { useDebounce } from '../hooks/useDebounce';
 
+// --- Product Card Component ---
+const ProductCard = ({ product, onAddToCart }: { product: Product, onAddToCart: (product: Product) => void }) => (
+  <Card 
+    onClick={() => onAddToCart(product)}
+    className="p-0 flex flex-col h-full overflow-hidden group cursor-pointer hover:border-primary-600 transition-colors duration-200"
+  >
+    <div className="relative pt-[100%]">
+      <img src={product.image} alt={product.name} className="absolute top-0 left-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"/>
+      {product.stock <= 5 && <Badge variant={product.stock === 0 ? 'danger' : 'warning'} className="absolute top-2 right-2">{product.stock} left</Badge>}
+    </div>
+    <div className="p-4 flex-1 flex flex-col">
+      <h3 className="font-semibold text-sm text-text flex-1">{product.name}</h3>
+      <p className="font-mono text-lg text-primary-400 font-bold mt-2">Rp{product.price.toLocaleString()}</p>
+    </div>
+  </Card>
+);
+
+
+// --- Cart View Component ---
+const CartView = ({ cart, onUpdateQuantity, onCheckout }: { 
+  cart: any[], 
+  onUpdateQuantity: (id: string, amount: number) => void,
+  onCheckout: (method: 'cash' | 'qris' | 'card') => void
+}) => {
+  const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+  return (
+    <div className="h-full flex flex-col bg-surface">
+      <div className="p-4 border-b border-white/10 flex-shrink-0">
+        <h2 className="text-lg font-bold flex items-center"><ShoppingCart className="w-5 h-5 mr-3"/>Current Order</h2>
+      </div>
+
+      <div className="flex-1 p-4 space-y-3 overflow-y-auto">
+        {cart.length === 0 ? (
+          <div className="text-center text-text-muted py-10">
+            <p>Your cart is empty.</p>
+          </div>
+        ) : (
+          cart.map(item => (
+            <motion.div key={item.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-4">
+              <img src={item.image} alt={item.name} className="w-14 h-14 rounded-lg object-cover" />
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-text">{item.name}</p>
+                <p className="text-xs text-primary-400">Rp{item.price.toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => onUpdateQuantity(item.id, -1)}><Minus className="w-4 h-4"/></Button>
+                <span className="font-mono text-sm w-5 text-center">{item.quantity}</span>
+                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => onUpdateQuantity(item.id, 1)}><Plus className="w-4 h-4"/></Button>
+              </div>
+            </motion.div>
+          ))
+        )}
+      </div>
+      
+      {cart.length > 0 && (
+        <div className="p-4 border-t border-white/10 space-y-4 flex-shrink-0">
+          <div className="flex justify-between items-center font-bold text-lg">
+            <span>Total:</span>
+            <span className="text-primary-400">Rp{cartTotal.toLocaleString()}</span>
+          </div>
+          <Button onClick={() => onCheckout('qris')} variant="secondary" size="lg" className="w-full">Confirm & Checkout</Button>
+          <div className="grid grid-cols-2 gap-2">
+              <Button onClick={() => onCheckout('cash')} variant="outline">Cash</Button>
+              <Button onClick={() => onCheckout('card')} variant="outline">Card</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+// --- Main POS Page ---
 export const POS: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [search, setSearch] = useState('');
-  const [category, setCategory] = useState('All');
-  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
+  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
+  const [cart, setCart] = useState<any[]>([]);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    loadProducts();
-  }, []);
+  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
+  const debouncedSearchTerm = useDebounce(searchTerm, 300);
 
   const loadProducts = async () => {
-    const data = await db.getProducts();
-    setProducts(data);
+    setLoading(true);
+    const prods = await db.getProducts();
+    setProducts(prods);
+    setFilteredProducts(prods);
     setLoading(false);
-  };
+  }
 
-  const filteredProducts = products.filter(p => 
-    (category === 'All' || p.category === category) &&
-    p.name.toLowerCase().includes(search.toLowerCase())
-  );
+  useEffect(() => { loadProducts(); }, []);
 
-  const categories = ['All', ...Array.from(new Set(products.map(p => p.category)))];
+  useEffect(() => {
+    const result = products.filter(p => 
+      p.name.toLowerCase().includes(debouncedSearchTerm.toLowerCase())
+    );
+    setFilteredProducts(result);
+  }, [debouncedSearchTerm, products]);
 
   const addToCart = (product: Product) => {
-    if (product.stock <= 0) {
-        alert("Out of stock!");
-        return;
-    }
-    
+    if (product.stock === 0) return;
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
       if (existing) {
-        if (existing.quantity >= product.stock) {
-            alert("Max stock reached");
-            return prev;
-        }
-        return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
+        return prev.map(item => 
+          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+        );
+      } else {
+        return [...prev, { ...product, quantity: 1 }];
       }
-      return [...prev, { ...product, quantity: 1 }];
     });
-    // Haptic
-    if (navigator.vibrate) navigator.vibrate(50);
   };
 
-  const updateQty = (id: string, delta: number) => {
-    const product = products.find(p => p.id === id);
-    if (!product) return;
-
-    setCart(prev => prev.map(item => {
-      if (item.id === id) {
-        const newQty = item.quantity + delta;
-        if (newQty > product.stock && delta > 0) return item;
-        return { ...item, quantity: Math.max(0, newQty) };
-      }
-      return item;
-    }).filter(item => item.quantity > 0));
+  const updateQuantity = (id: string, amount: number) => {
+    setCart(prev => 
+      prev.map(item => 
+        item.id === id ? { ...item, quantity: Math.max(0, item.quantity + amount) } : item
+      ).filter(item => item.quantity > 0)
+    );
   };
-
-  const cartTotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
 
   const handleCheckout = async (method: 'cash' | 'qris' | 'card') => {
     if (cart.length === 0) return;
-    
-    const tx: Transaction = {
-      id: Date.now().toString(),
-      items: cart,
-      total: cartTotal,
-      date: new Date().toISOString(),
-      paymentMethod: method,
-      status: 'completed'
-    };
-    
+    const tx: Transaction = { id: crypto.randomUUID(), items: cart, total: cart.reduce((sum, item) => sum + (item.price * item.quantity), 0), date: new Date().toISOString(), paymentMethod: method, status: 'completed' };
     await db.addTransaction(tx);
-    
-    // Auto Print
-    if (confirm("Transaction Successful! Print Receipt?")) {
-        const profile = await db.getShopProfile();
-        printReceipt(tx, profile);
+    if (confirm("Print Receipt?")) {
+      const profile = await db.getShopProfile();
+      printReceipt(tx, profile);
     }
-    
     setCart([]);
     setIsMobileCartOpen(false);
-    // Refresh products to show updated stock
     loadProducts();
   };
 
-  if(loading) return <div className="p-10 text-center">Loading Products...</div>;
-
   return (
-    <div className="flex h-[calc(100vh-80px)] lg:h-screen lg:pt-0 overflow-hidden relative">
-      
-      {/* Product Section */}
-      <div className="flex-1 flex flex-col p-4 lg:p-6 overflow-hidden">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row gap-4 mb-6 justify-between">
-          <div className="relative flex-1 max-w-md">
-            <Input 
-              icon={<Search className="w-4 h-4" />} 
-              placeholder="Search products..." 
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+    <div className="flex h-screen bg-background">
+      <main className="flex-1 flex flex-col overflow-hidden">
+        <header className="flex-shrink-0 bg-surface border-b border-white/10 z-10">
+          <div className="p-4 flex items-center gap-4">
+            <div className="flex-1">
+              <Input icon={<Search className="w-4 h-4"/>} placeholder="Search products..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+            </div>
+            <div className="hidden md:flex items-center gap-2">
+              <Button variant={viewMode === 'grid' ? 'primary' : 'outline'} size="icon" onClick={() => setViewMode('grid')}><Grid className="w-5 h-5"/></Button>
+              <Button variant={viewMode === 'list' ? 'primary' : 'outline'} size="icon" onClick={() => setViewMode('list')}><List className="w-5 h-5"/></Button>
+            </div>
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0 no-scrollbar">
-            {categories.map(cat => (
-              <button
-                key={cat}
-                onClick={() => setCategory(cat)}
-                className={cn(
-                  "px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-colors",
-                  category === cat ? "bg-primary text-white" : "bg-surface hover:bg-white/5 text-slate-400"
-                )}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-        </div>
+        </header>
 
-        {/* Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 overflow-y-auto pb-20 lg:pb-0">
-          {filteredProducts.map(product => (
-            <motion.div
-              key={product.id}
-              whileHover={{ y: -5 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => addToCart(product)}
-              className="group cursor-pointer"
-            >
-              <Card className="p-0 overflow-hidden h-full flex flex-col border-0 bg-surface/30 hover:bg-surface/50 transition-colors">
-                <div className="aspect-square bg-slate-800 relative">
-                  <img src={product.image} alt={product.name} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
-                  <div className="absolute top-2 right-2">
-                    <Badge variant={product.stock === 0 ? 'warning' : product.stock < 10 ? 'warning' : 'default'}>
-                        {product.stock === 0 ? 'Out of Stock' : `${product.stock} left`}
-                    </Badge>
-                  </div>
-                </div>
-                <div className="p-4 flex-1 flex flex-col">
-                  <h3 className="font-medium text-text">{product.name}</h3>
-                  <div className="mt-auto pt-2 flex items-center justify-between">
-                    <span className="text-primary font-bold">Rp {product.price.toLocaleString()}</span>
-                    <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-all">
-                      <Plus className="w-4 h-4" />
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            </motion.div>
-          ))}
+        <div className="flex-1 flex overflow-hidden">
+          <div className="flex-1 overflow-y-auto p-4">
+            {loading ? (
+              <div className="flex justify-center items-center h-full"><Loader2 className="w-8 h-8 animate-spin text-primary"/></div>
+            ) : (
+              <motion.div layout className={`grid ${viewMode === 'grid' ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5' : 'grid-cols-1'} gap-4`}>
+                {filteredProducts.map(p => <ProductCard key={p.id} product={p} onAddToCart={addToCart} /> )}
+              </motion.div>
+            )}
+          </div>
+
+          <aside className="hidden lg:block w-[380px] flex-shrink-0 border-l border-white/10">
+            <CartView cart={cart} onUpdateQuantity={updateQuantity} onCheckout={handleCheckout} />
+          </aside>
         </div>
+      </main>
+
+      <div className="lg:hidden fixed bottom-5 right-5 z-20">
+        <Button onClick={() => setIsMobileCartOpen(true)} size="lg" className="rounded-full shadow-lg shadow-primary/40 h-16 w-16">
+          <ShoppingCart className="w-7 h-7" />
+          {cart.length > 0 && <Badge variant="danger" className="absolute top-0 right-0">{cart.length}</Badge>}
+        </Button>
       </div>
 
-      {/* Cart Section */}
       <AnimatePresence>
-        {(isMobileCartOpen || window.innerWidth >= 1024) && (
-          <motion.div
-            initial={{ x: '100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '100%' }}
-            transition={{ type: "spring", damping: 25, stiffness: 200 }}
-            className={cn(
-              "fixed lg:relative inset-y-0 right-0 w-full lg:w-[400px] bg-background lg:bg-surface/10 lg:border-l lg:border-white/5 shadow-2xl z-50 flex flex-col backdrop-blur-xl lg:backdrop-blur-none",
-              !isMobileCartOpen && "hidden lg:flex"
-            )}
+        {isMobileCartOpen && (
+          <motion.div 
+            initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ type: 'spring', stiffness: 400, damping: 40 }}
+            className="lg:hidden fixed inset-0 z-30 flex flex-col"
           >
-            {/* Cart Header */}
-            <div className="p-6 border-b border-white/5 flex items-center justify-between bg-surface/50 lg:bg-transparent">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <ShoppingCart className="w-5 h-5 text-primary" /> Current Order
-              </h2>
-              <button onClick={() => setIsMobileCartOpen(false)} className="lg:hidden p-2 text-slate-400">
-                Close
-              </button>
-            </div>
-
-            {/* Cart Items */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {cart.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-4">
-                  <ShoppingCart className="w-12 h-12 opacity-20" />
-                  <p>Cart is empty</p>
-                </div>
-              ) : (
-                cart.map(item => (
-                  <div key={item.id} className="flex gap-3 bg-white/5 p-3 rounded-xl animate-in slide-in-from-right-10">
-                    <img src={item.image} className="w-16 h-16 rounded-lg object-cover bg-slate-800" />
-                    <div className="flex-1">
-                      <div className="flex justify-between items-start">
-                        <h4 className="font-medium text-sm">{item.name}</h4>
-                        <span className="text-sm font-bold">{(item.price * item.quantity).toLocaleString()}</span>
-                      </div>
-                      <p className="text-xs text-slate-400 mt-1">Rp {item.price.toLocaleString()} / unit</p>
-                      
-                      <div className="flex items-center gap-3 mt-2">
-                        <button onClick={() => updateQty(item.id, -1)} className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/20"><Minus className="w-3 h-3" /></button>
-                        <span className="text-sm w-4 text-center">{item.quantity}</span>
-                        <button onClick={() => updateQty(item.id, 1)} className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center hover:bg-primary/30"><Plus className="w-3 h-3" /></button>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Cart Footer */}
-            <div className="p-6 bg-surface/50 lg:bg-transparent border-t border-white/5 space-y-4">
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between text-slate-400">
-                  <span>Subtotal</span>
-                  <span>Rp {cartTotal.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>Tax (11%)</span>
-                  <span>Rp {(cartTotal * 0.11).toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between text-xl font-bold text-white pt-2 border-t border-white/5">
-                  <span>Total</span>
-                  <span>Rp {(cartTotal * 1.11).toLocaleString()}</span>
-                </div>
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsMobileCartOpen(false)}></div>
+            <div className="relative mt-auto h-[90vh] bg-surface rounded-t-2xl flex flex-col overflow-hidden">
+              <div className="w-full py-3 flex justify-center items-center flex-shrink-0" onClick={() => setIsMobileCartOpen(false)}>
+                <div className="w-16 h-1.5 bg-white/20 rounded-full" />
               </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                 <Button variant="secondary" className="flex flex-col h-16 gap-1" onClick={() => handleCheckout('cash')}>
-                    <Banknote className="w-5 h-5" /> <span className="text-[10px]">Cash</span>
-                 </Button>
-                 <Button variant="primary" className="flex flex-col h-16 gap-1" onClick={() => handleCheckout('qris')}>
-                    <QrCode className="w-5 h-5" /> <span className="text-[10px]">QRIS</span>
-                 </Button>
-                 <Button variant="secondary" className="flex flex-col h-16 gap-1" onClick={() => handleCheckout('card')}>
-                    <CreditCard className="w-5 h-5" /> <span className="text-[10px]">Card</span>
-                 </Button>
-              </div>
+              <CartView cart={cart} onUpdateQuantity={updateQuantity} onCheckout={handleCheckout} />
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Mobile Cart FAB */}
-      {!isMobileCartOpen && cart.length > 0 && (
-         <motion.button
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            onClick={() => setIsMobileCartOpen(true)}
-            className="fixed lg:hidden bottom-20 right-4 h-14 w-14 rounded-full bg-accent text-white shadow-xl shadow-accent/40 flex items-center justify-center z-40"
-         >
-            <div className="relative">
-              <ShoppingCart className="w-6 h-6" />
-              <span className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 rounded-full text-[10px] font-bold flex items-center justify-center border-2 border-background">
-                {cart.reduce((a,b) => a + b.quantity, 0)}
-              </span>
-            </div>
-         </motion.button>
-      )}
     </div>
   );
 };
